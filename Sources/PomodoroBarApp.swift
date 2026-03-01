@@ -3,11 +3,13 @@ import UserNotifications
 
 private enum Constants {
     static let appName = "Focus Timer"
+    static let menuBarTitle = "focusTimer"
     static let defaultIntervalSeconds = 30 * 60
     static let preset30MinutesSeconds = 30 * 60
     static let preset1HourSeconds = 60 * 60
     static let intervalSecondsKey = "intervalSeconds"
     static let customSoundPathKey = "customSoundPath"
+    static let notificationDeniedHelpShownKey = "notificationDeniedHelpShown"
 }
 
 final class TimerController {
@@ -151,7 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         keyEquivalent: "p"
     )
     private lazy var stopItem = NSMenuItem(
-        title: "Stop",
+        title: "Reset",
         action: #selector(stopTimer),
         keyEquivalent: "x"
     )
@@ -179,14 +181,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             switch settings.authorizationStatus {
             case .notDetermined:
                 let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
-                if granted {
+                let updatedSettings = await center.notificationSettings()
+                let hasNotificationAccess: Bool
+                switch updatedSettings.authorizationStatus {
+                case .authorized, .provisional:
+                    hasNotificationAccess = true
+                default:
+                    hasNotificationAccess = false
+                }
+                if granted || hasNotificationAccess {
+                    UserDefaults.standard.set(false, forKey: Constants.notificationDeniedHelpShownKey)
                     sendSystemNotification(title: Constants.appName, body: "Notifications are enabled.")
-                } else {
-                    showNotificationPermissionHelp()
+                } else if updatedSettings.authorizationStatus == .denied {
+                    showNotificationPermissionHelpOnce()
                 }
             case .denied:
-                showNotificationPermissionHelp()
-            case .authorized, .provisional, .ephemeral:
+                showNotificationPermissionHelpOnce()
+            case .authorized, .provisional:
+                UserDefaults.standard.set(false, forKey: Constants.notificationDeniedHelpShownKey)
                 break
             @unknown default:
                 break
@@ -196,7 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func configureMenuBar() {
         if let button = statusItem.button {
-            button.title = intervalShortText(intervalSeconds)
+            button.title = Constants.menuBarTitle
             button.toolTip = "\(intervalDescription(intervalSeconds)) reminder timer"
         }
 
@@ -232,7 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func refreshMenuState() {
         stateItem.title = timerController.elapsedText
-        statusItem.button?.title = timerController.isActive ? timerController.formattedElapsed : intervalShortText(intervalSeconds)
+        statusItem.button?.title = timerController.isActive ? timerController.formattedElapsed : Constants.menuBarTitle
         statusItem.button?.toolTip = "\(intervalDescription(intervalSeconds)) reminder timer"
         let timerInactive = !timerController.isActive
         setIntervalItem.isEnabled = timerInactive
@@ -420,6 +432,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    private func showNotificationPermissionHelpOnce() {
+        if UserDefaults.standard.bool(forKey: Constants.notificationDeniedHelpShownKey) {
+            return
+        }
+        UserDefaults.standard.set(true, forKey: Constants.notificationDeniedHelpShownKey)
+        showNotificationPermissionHelp()
     }
     
     private func showInvalidIntervalAlert() {
