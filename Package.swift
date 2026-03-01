@@ -2,16 +2,16 @@
 import PackageDescription
 
 let package = Package(
-    name: "PomodoroBar",
+    name: "FocusTimer",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "PomodoroBar", targets: ["PomodoroBar"])
+        .executable(name: "FocusTimer", targets: ["FocusTimer"])
     ],
     targets: [
         .executableTarget(
-            name: "PomodoroBar",
+            name: "FocusTimer",
             path: "Sources"
         )
     ]

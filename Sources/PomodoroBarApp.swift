@@ -2,53 +2,103 @@ import AppKit
 import UserNotifications
 
 private enum Constants {
-    static let defaultIntervalSeconds = 10
+    static let appName = "Focus Timer"
+    static let defaultIntervalSeconds = 30 * 60
+    static let preset30MinutesSeconds = 30 * 60
+    static let preset1HourSeconds = 60 * 60
     static let intervalSecondsKey = "intervalSeconds"
     static let customSoundPathKey = "customSoundPath"
 }
 
 final class TimerController {
     private var timer: Timer?
-    private var startDate: Date?
+    private var runStartDate: Date?
+    private var accumulatedElapsed: TimeInterval = 0
+    private var nextReminderDate: Date?
+    private var remainingUntilNextReminder: TimeInterval = 0
     private(set) var isRunning = false
+    private(set) var isPaused = false
     private var tickHandler: (() -> Void)?
     var interval: TimeInterval = TimeInterval(Constants.defaultIntervalSeconds)
+    var isActive: Bool { isRunning || isPaused }
 
     func start(onTick: @escaping () -> Void) {
-        guard !isRunning else { return }
+        guard !isRunning, !isPaused else { return }
         isRunning = true
-        startDate = Date()
+        isPaused = false
+        runStartDate = Date()
+        accumulatedElapsed = 0
+        remainingUntilNextReminder = interval
         tickHandler = onTick
-        scheduleNextTick()
+        scheduleNextTick(after: interval)
     }
 
-    private func scheduleNextTick() {
+    private func scheduleNextTick(after delay: TimeInterval) {
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
-            guard let self, self.isRunning else { return }
+        let safeDelay = max(1, delay)
+        nextReminderDate = Date().addingTimeInterval(safeDelay)
+        timer = Timer.scheduledTimer(withTimeInterval: safeDelay, repeats: false) { [weak self] _ in
+            guard let self, self.isRunning, !self.isPaused else { return }
+            self.remainingUntilNextReminder = self.interval
             self.tickHandler?()
             // Schedule the next reminder only after the current one is handled.
-            self.scheduleNextTick()
+            self.scheduleNextTick(after: self.interval)
         }
         timer?.tolerance = 2
+    }
+
+    func pause() {
+        guard isRunning, !isPaused else { return }
+        let now = Date()
+        if let runStartDate {
+            accumulatedElapsed += now.timeIntervalSince(runStartDate)
+        }
+        remainingUntilNextReminder = max(1, nextReminderDate?.timeIntervalSince(now) ?? interval)
+        timer?.invalidate()
+        timer = nil
+        nextReminderDate = nil
+        runStartDate = nil
+        isRunning = false
+        isPaused = true
+    }
+
+    func resume() {
+        guard isPaused, !isRunning else { return }
+        isPaused = false
+        isRunning = true
+        runStartDate = Date()
+        let delay = remainingUntilNextReminder > 0 ? remainingUntilNextReminder : interval
+        scheduleNextTick(after: delay)
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
-        startDate = nil
+        runStartDate = nil
+        accumulatedElapsed = 0
+        nextReminderDate = nil
+        remainingUntilNextReminder = 0
         tickHandler = nil
         isRunning = false
+        isPaused = false
     }
 
     var elapsedText: String {
-        guard isRunning else { return "Not running" }
-        return "Running (\(formattedElapsed))"
+        if isRunning {
+            return "Running (\(formattedElapsed))"
+        }
+        if isPaused {
+            return "Paused (\(formattedElapsed))"
+        }
+        return "Not running"
     }
 
     var formattedElapsed: String {
-        guard let startDate else { return "00:00:00" }
-        let totalSeconds = Int(Date().timeIntervalSince(startDate))
+        var totalElapsed = accumulatedElapsed
+        if isRunning, let runStartDate {
+            totalElapsed += Date().timeIntervalSince(runStartDate)
+        }
+        let totalSeconds = Int(totalElapsed)
         let hours = totalSeconds / 3600
         let minutes = (totalSeconds % 3600) / 60
         let seconds = totalSeconds % 60
@@ -95,10 +145,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         action: #selector(startTimer),
         keyEquivalent: "s"
     )
-    private lazy var testNotificationItem = NSMenuItem(
-        title: "Test Notification",
-        action: #selector(testNotification),
-        keyEquivalent: "t"
+    private lazy var pauseResumeItem = NSMenuItem(
+        title: "Pause",
+        action: #selector(togglePauseResume),
+        keyEquivalent: "p"
     )
     private lazy var stopItem = NSMenuItem(
         title: "Stop",
@@ -113,6 +163,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if UserDefaults.standard.object(forKey: Constants.intervalSecondsKey) == nil {
+            UserDefaults.standard.set(Constants.defaultIntervalSeconds, forKey: Constants.intervalSecondsKey)
+        }
         timerController.interval = TimeInterval(intervalSeconds)
         configureNotifications()
         configureMenuBar()
@@ -127,7 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             case .notDetermined:
                 let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
                 if granted {
-                    sendSystemNotification(title: "PomodoroBar", body: "Notifications are enabled.")
+                    sendSystemNotification(title: Constants.appName, body: "Notifications are enabled.")
                 } else {
                     showNotificationPermissionHelp()
                 }
@@ -148,6 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
 
         startItem.target = self
+        pauseResumeItem.target = self
         stopItem.target = self
         setIntervalItem.target = self
         preset30MinItem.target = self
@@ -167,8 +221,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         statusMenu.addItem(resetSoundItem)
         statusMenu.addItem(.separator())
         statusMenu.addItem(startItem)
+        statusMenu.addItem(pauseResumeItem)
         statusMenu.addItem(stopItem)
-        statusMenu.addItem(testNotificationItem)
         statusMenu.addItem(.separator())
         statusMenu.addItem(withTitle: "Quit", action: #selector(quitApp), keyEquivalent: "q").target = self
         statusItem.menu = statusMenu
@@ -178,14 +232,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func refreshMenuState() {
         stateItem.title = timerController.elapsedText
-        statusItem.button?.title = timerController.isRunning ? timerController.formattedElapsed : intervalShortText(intervalSeconds)
+        statusItem.button?.title = timerController.isActive ? timerController.formattedElapsed : intervalShortText(intervalSeconds)
         statusItem.button?.toolTip = "\(intervalDescription(intervalSeconds)) reminder timer"
-        setIntervalItem.isEnabled = !timerController.isRunning
-        preset30MinItem.isEnabled = !timerController.isRunning
-        preset1HourItem.isEnabled = !timerController.isRunning
-        startItem.isEnabled = !timerController.isRunning
-        stopItem.isEnabled = timerController.isRunning
-        testNotificationItem.isEnabled = true
+        let timerInactive = !timerController.isActive
+        setIntervalItem.isEnabled = timerInactive
+        preset30MinItem.isEnabled = timerInactive
+        preset1HourItem.isEnabled = timerInactive
+        startItem.isEnabled = timerInactive
+        pauseResumeItem.isEnabled = timerController.isActive
+        pauseResumeItem.title = timerController.isPaused ? "Resume" : "Pause"
+        stopItem.isEnabled = timerController.isActive
         resetSoundItem.isEnabled = customSoundURL() != nil
     }
 
@@ -205,16 +261,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         refreshMenuState()
     }
 
-    @objc private func testNotification() {
-        sendSystemNotification(title: "PomodoroBar Test", body: "If you can see this, notifications are working.")
+    @objc private func togglePauseResume() {
+        if timerController.isRunning {
+            timerController.pause()
+            stopUIRefreshTimer()
+        } else if timerController.isPaused {
+            timerController.resume()
+            startUIRefreshTimer()
+        }
+        refreshMenuState()
     }
 
     @objc private func setPreset30Minutes() {
-        saveIntervalSeconds(30 * 60)
+        saveIntervalSeconds(Constants.preset30MinutesSeconds)
     }
 
     @objc private func setPreset1Hour() {
-        saveIntervalSeconds(60 * 60)
+        saveIntervalSeconds(Constants.preset1HourSeconds)
     }
 
     @objc private func quitApp() {
@@ -247,37 +310,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Set timer interval"
-        alert.informativeText = "Enter minutes and/or seconds."
+        alert.informativeText = "Enter minutes and seconds."
         alert.alertStyle = .informational
 
         let total = intervalSeconds
         let currentMinutes = total / 60
         let currentSeconds = total % 60
 
-        let minutesLabel = NSTextField(labelWithString: "Minutes")
-        let minutesInput = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 24))
-        minutesInput.placeholderString = "0"
+        let minutesInput = NSTextField(frame: NSRect(x: 0, y: 0, width: 84, height: 24))
         minutesInput.stringValue = "\(currentMinutes)"
+        minutesInput.alignment = .right
+        minutesInput.focusRingType = .default
+        minutesInput.controlSize = .regular
 
-        let secondsLabel = NSTextField(labelWithString: "Seconds")
-        let secondsInput = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 24))
-        secondsInput.placeholderString = "0"
+        let secondsInput = NSTextField(frame: NSRect(x: 0, y: 0, width: 84, height: 24))
         secondsInput.stringValue = "\(currentSeconds)"
+        secondsInput.alignment = .right
+        secondsInput.focusRingType = .default
+        secondsInput.controlSize = .regular
 
-        let minutesRow = NSStackView(views: [minutesLabel, minutesInput])
-        minutesRow.orientation = .horizontal
-        minutesRow.spacing = 8
-        minutesRow.distribution = .fillProportionally
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .none
+        formatter.minimum = 0
+        formatter.maximum = 9999
+        formatter.generatesDecimalNumbers = false
+        minutesInput.formatter = formatter
+        secondsInput.formatter = formatter
 
-        let secondsRow = NSStackView(views: [secondsLabel, secondsInput])
-        secondsRow.orientation = .horizontal
-        secondsRow.spacing = 8
-        secondsRow.distribution = .fillProportionally
+        let minutesLabel = NSTextField(labelWithString: "Minutes")
+        let secondsLabel = NSTextField(labelWithString: "Seconds")
+        minutesLabel.alignment = .left
+        secondsLabel.alignment = .left
 
-        let container = NSStackView(views: [minutesRow, secondsRow])
-        container.orientation = .vertical
-        container.spacing = 8
-        alert.accessoryView = container
+        let grid = NSGridView(views: [
+            [minutesLabel, minutesInput],
+            [secondsLabel, secondsInput]
+        ])
+        grid.columnSpacing = 10
+        grid.rowSpacing = 8
+        grid.frame = NSRect(x: 0, y: 0, width: 230, height: 62)
+        alert.accessoryView = grid
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
 
@@ -315,7 +387,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private func sendReminderNotification() {
         playReminderSound()
         sendSystemNotification(
-            title: "PomodoroBar",
+            title: Constants.appName,
             body: "\(intervalDescription(intervalSeconds)) have passed."
         )
     }
@@ -339,7 +411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Notifications are disabled"
-        alert.informativeText = "Enable notifications for PomodoroBar in System Settings to receive timer banners."
+        alert.informativeText = "Enable notifications for \(Constants.appName) in System Settings to receive timer banners."
         alert.addButton(withTitle: "Open Settings")
         alert.addButton(withTitle: "Later")
 
@@ -430,7 +502,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 }
 
 @main
-struct PomodoroBarMain {
+struct FocusTimerMain {
     static func main() {
         let app = NSApplication.shared
         let delegate = AppDelegate()
