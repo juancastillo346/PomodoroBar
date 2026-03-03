@@ -1,4 +1,4 @@
-# Focus Timer
+# StudyPulse
 
 Simple macOS menu bar focus timer for personal use.
 
@@ -26,4 +26,4 @@ Build + open app:
 
 The built app is at:
 
-`dist/FocusTimer.app`
+`dist/StudyPulse.app`

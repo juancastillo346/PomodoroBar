@@ -6,5 +6,5 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 "$ROOT_DIR/scripts/build_app.sh"
 
 if [[ "${1:-}" == "--open" ]]; then
-  open "$ROOT_DIR/dist/FocusTimer.app"
+  open "$ROOT_DIR/dist/StudyPulse.app"
 fi

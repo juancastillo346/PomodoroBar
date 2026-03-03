@@ -2,8 +2,8 @@ import AppKit
 import UserNotifications
 
 private enum Constants {
-    static let appName = "Focus Timer"
-    static let menuBarTitle = "focusTimer"
+    static let appName = "StudyPulse"
+    static let menuBarTitle = "StudyPulse"
     static let defaultIntervalSeconds = 30 * 60
     static let preset30MinutesSeconds = 30 * 60
     static let preset1HourSeconds = 60 * 60
@@ -522,7 +522,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 }
 
 @main
-struct FocusTimerMain {
+struct StudyPulseMain {
     static func main() {
         let app = NSApplication.shared
         let delegate = AppDelegate()

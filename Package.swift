@@ -2,16 +2,16 @@
 import PackageDescription
 
 let package = Package(
-    name: "FocusTimer",
+    name: "StudyPulse",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "FocusTimer", targets: ["FocusTimer"])
+        .executable(name: "StudyPulse", targets: ["StudyPulse"])
     ],
     targets: [
         .executableTarget(
-            name: "FocusTimer",
+            name: "StudyPulse",
             path: "Sources"
         )
     ]

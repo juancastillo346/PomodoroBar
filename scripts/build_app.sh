@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-EXECUTABLE_NAME="FocusTimer"
-APP_BUNDLE_NAME="FocusTimer"
-APP_DISPLAY_NAME="Focus Timer"
-BUNDLE_ID="com.juancastillo.focustimer"
+EXECUTABLE_NAME="StudyPulse"
+APP_BUNDLE_NAME="StudyPulse"
+APP_DISPLAY_NAME="StudyPulse"
+BUNDLE_ID="com.juancastillo.studypulse"
 BUILD_CONFIG="release"
 BUILD_DIR="$ROOT_DIR/.build/$BUILD_CONFIG"
 DIST_DIR="$ROOT_DIR/dist"
@@ -22,11 +22,15 @@ export SWIFTPM_MODULECACHE_OVERRIDE="$ROOT_DIR/.build/swiftpm-module-cache"
 export SWIFTPM_TESTS_MODULECACHE_OVERRIDE="$ROOT_DIR/.build/swiftpm-tests-module-cache"
 swift build --disable-sandbox -c "$BUILD_CONFIG"
 
-rm -rf "$APP_DIR"
+mkdir -p "$DIST_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
-cp "$BUILD_DIR/$EXECUTABLE_NAME" "$MACOS_DIR/$EXECUTABLE_NAME"
-chmod +x "$MACOS_DIR/$EXECUTABLE_NAME"
+TMP_EXECUTABLE="$MACOS_DIR/$EXECUTABLE_NAME.new"
+cp "$BUILD_DIR/$EXECUTABLE_NAME" "$TMP_EXECUTABLE"
+chmod +x "$TMP_EXECUTABLE"
+mv -f "$TMP_EXECUTABLE" "$MACOS_DIR/$EXECUTABLE_NAME"
+# Remove leftover executable name from previous app versions.
+rm -f "$MACOS_DIR/FocusTimer"
 
 ICON_SOURCE="$ROOT_DIR/assets/AppIcon.png"
 ICON_ICNS="$ROOT_DIR/assets/AppIcon.icns"
